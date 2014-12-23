@@ -12,6 +12,7 @@
 #include <stdlib.h>
 
 static int g_log = 1;
+static int g_scheduler= 0;//0 for SCHED_DEADLINE, 1 for CFS, 2 for ...
 static int duration;
 static task_data_t task;
 static task_result_t task_rst;
@@ -111,14 +112,15 @@ static inline void process_log(task_data_t *p_task, task_result_t *p_rst)
 	if (i_thread_remain > 0)
 	{	
 		++p_rst->lack_cnt;
-		if (after_middle)
-		{
-			++p_rst->miss_cnt_after_middle;
-		}
 	}
 	if (i_slack < 0)
 	{
 		++p_rst->miss_cnt;
+		if (after_middle)
+		{
+			++p_rst->miss_cnt_after_middle;
+		}
+
 	}
 	p_rst->i_whole_thread_runtime += i_thread_run;
 	
@@ -154,7 +156,7 @@ void bye(void)
 int main(int argc, char* argv[])
 {	
 	pid_t pid;
-	long period, budget, exec;
+	long long period, budget, exec;
 	char* token;
 	struct sched_attr dl_attr;
 	int ret;
@@ -185,12 +187,12 @@ int main(int argc, char* argv[])
 		}
 	
 		token = strtok(argv[1], ":");
-		period = strtol(token, NULL, 10);
+		period = strtoll(token, NULL, 10);
 		token = strtok(NULL, ":");
-		budget = strtol(token, NULL, 10);
+		budget = strtoll(token, NULL, 10);
 		token = strtok(NULL, ":");
-		exec = strtol(token, NULL, 10);
-		printf("period = %ld us, budget = %ld us, exec = %ld us\n", period, budget, exec);
+		exec = strtoll(token, NULL, 10);
+		printf("period = %lld ns, budget = %lld ns, exec = %lld ns\n", period, budget, exec);
 	
 		if (exec == 0)
 		{
@@ -211,14 +213,21 @@ int main(int argc, char* argv[])
 		{
 			g_log = atoi(argv[3]);
 		}
+		if (argc >= 5)
+		{
+			g_scheduler = atoi(argv[4]);	
+		}
 
 		//set deadline scheduling
 		pid = 0;
 
 		assert(period >= budget && budget >= exec);
-		task_rst.dl_period = usec_to_timespec(period);
-		task_rst.dl_budget = usec_to_timespec(budget);
-		task_rst.dl_exec = usec_to_timespec(exec);
+//		task_rst.dl_period = usec_to_timespec(period);
+//		task_rst.dl_budget = usec_to_timespec(budget);
+//		task_rst.dl_exec = usec_to_timespec(exec);
+		task_rst.dl_period = nsec_to_timespec((unsigned long long)period);
+		task_rst.dl_budget = nsec_to_timespec((unsigned long long)budget);
+		task_rst.dl_exec = nsec_to_timespec((unsigned long long)exec);
 		dl_attr.size = sizeof(dl_attr);
 		dl_attr.sched_flags = 0;
 		dl_attr.sched_policy = SCHED_DEADLINE;
@@ -229,11 +238,24 @@ int main(int argc, char* argv[])
 	
 		task_rst.correct_cnt =(int)((int64_t)(duration * 1E9) / timespec_to_nsec(&task_rst.dl_period));
 		task_rst.i_corrent_whole_thread_runtime = (int64_t)task_rst.correct_cnt * timespec_to_nsec(&task_rst.dl_exec);
-
-		ret = sched_setattr(pid, &dl_attr, flags);
-		if (ret != 0)
+	
+		if (g_scheduler == 0)
 		{
-			perror("sched_setattr");
+			printf("using sched_deadline\n");
+			ret = sched_setattr(pid, &dl_attr, flags);
+			if (ret != 0)
+			{
+				perror("sched_setattr");
+				exit(1);
+			}
+		}
+		else if (g_scheduler == 1)
+		{
+			printf("using cfs\n");
+		}
+		else
+		{
+			printf("not implemented\n");
 			exit(1);
 		}
 #if 0
@@ -292,7 +314,7 @@ int main(int argc, char* argv[])
 	}
 	else
 	{
-		printf("usage: rt_task <period>:<budget>:<exec> <duration> [<log_switch>]\n");
+		printf("usage: rt_task <period>:<budget>:<exec> <duration> [<log_switch>] [<scheduler>]\n");
 	}
 	return 0;
 }
